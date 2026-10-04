@@ -1,6 +1,6 @@
 # 2. Materials and Methods
 
-> **Draft v2 — status legend.** `[TBD: …]` marks values that will be fixed by the pending pilot runs. `[VERIFY: …]` marks statements taken from the preliminary conference paper that must be checked against the corpus metadata or the code before submission. Remove this box and all markers before submission.
+> **Draft v2.1 — status legend.** Values implemented in `ctnet_pd/` (configuration `ctnet_pd/configs/default.yaml`) are now written in the text. `[TBD: …]` marks values that still depend on the pilot runs. `[VERIFY: …]` marks statements taken from the preliminary conference paper that must be checked against the corpus metadata or the code before submission. Remove this box and all markers before submission.
 
 ## 2.1. Study Design and Relation to the Preliminary Study
 
@@ -20,6 +20,8 @@ Table 0 lists the methodological changes with respect to the preliminary study. 
 | Data partitioning | Stratified 5-fold over recordings | Speaker-disjoint, repeated stratified group 5-fold, nested |
 | Hyperparameter selection | Per fold, final evaluation on the same folds | Inner subject-disjoint validation only |
 | Classification head | Flatten (22,400) → Dense(128) → Dense(2) | Global average pooling → Linear(64→2), 130 parameters |
+| Input length | Fixed per corpus (661 frames in NeuroVoz); short recordings stretched by spectral interpolation, long ones truncated | Overlapping 229-frame windows; no stretching or truncation (Section 2.5) |
+| Positional encoding | None | Learned (Eq. 2) |
 | Baselines | Values quoted from studies with other protocols | All retrained under the same folds and information boundary |
 | Explanations | Qualitative LRP, Grad-CAM and Score-CAM maps | Pre-/post-attention maps; deletion/insertion, ROAR, sanity checks, cross-cohort tests against null references |
 | Evaluation unit | Recording | Subject |
@@ -40,7 +42,7 @@ Two independent Spanish speech corpora were used (Table 1).
 
 `[VERIFY: whether sustained vowels, isolated words and sentences of PC-GITA were excluded and why.]`
 
-**NeuroVoz** [Mendes-Laureano et al., 2024] contains 3,010 recordings (26.88 ± 3.35 per participant) of 112 native Castilian Spanish speakers (54 PD, 58 HC), all PD patients in the ON state. Tasks:
+**NeuroVoz** [Mendes-Laureano et al., 2024] contains 3,010 recordings (26.88 ± 3.35 per participant) `[VERIFY: the Kaggle copy used in the preliminary study indexes 2,976 WAV files (1,509 HC, 1,467 PD)]` of 112 native Castilian Spanish speakers (54 PD, 58 HC), all PD patients in the ON state. Tasks:
 
 - sustained vowels /a/, /e/, /i/, /o/, /u/;
 - DDK /pa-ta-ka/;
@@ -93,35 +95,39 @@ The **primary** analyses were run per task family on the two shared families: /p
 All recordings of a subject were assigned to a single partition, so that $\mathcal S_{\text{train}}$, $\mathcal S_{\text{val}}$ and $\mathcal S_{\text{test}}$ are pairwise disjoint in every split.
 
 - **Outer loop.** Stratified group 5-fold cross-validation (stratified by diagnosis, grouped by subject), **repeated 10 times** with different seeds. With 100–112 subjects, each test fold holds about 20 subjects, so repetition is needed to stabilize the estimates.
-- **Inner loop.** Within each outer training set, a stratified group 4-fold split was used for hyperparameter selection, checkpoint selection, early stopping and the regularization weights. The outer test fold was never accessed during model selection.
+- **Inner loop.** Within each outer training set, a stratified, subject-disjoint hold-out of 20% of the training subjects was used for hyperparameter selection, checkpoint selection, early stopping and the regularization weights. A single inner split keeps the 50 outer folds computationally feasible; an inner 4-fold variant is available in the code (`cv.inner = kfold`). The outer test fold was never accessed during model selection.
 - **Leakage boundary.** Normalization statistics (Section 2.5) and acoustic-concept standardization (Section 2.10.3) were computed on the corresponding training partition only.
 
 ---
 
 ## 2.5. Preprocessing and Log-Mel Representation
 
-1. **Curation.** Recordings were manually curated to remove coughs and artifacts.
-2. **Silence trimming.** Leading, trailing and long internal silences were trimmed. `[TBD: method and threshold, e.g., energy-based with top_db = …]`
-3. **Resampling and normalization.** Signals were resampled from 44.1 kHz to 22.05 kHz and amplitude-normalized by min–max scaling.
-4. **Log-Mel spectrogram.** Each signal $\tilde x$ was converted into
+1. **Curation.** Recordings were manually curated to remove coughs and artifacts. `[VERIFY: this step is not part of the preliminary code; state whether it was done and how.]`
+2. **Resampling.** Signals were loaded as mono and resampled from 44.1 kHz to 22.05 kHz (librosa).
+3. **Silence trimming.** Leading and trailing silences were removed with an energy threshold of 30 dB below the recording peak (`librosa.effects.trim`). `[TBD: confirm the threshold on pilot data.]`
+4. **Amplitude normalization.** Each recording was peak-normalized to $[-1,1]$.
+5. **Log-Mel spectrogram.** Each signal $\tilde x$ was converted into
 $$
-X(f,t)=\log\!\Big(\textstyle\sum_{k} B_f(k)\,\big|\mathrm{STFT}(\tilde x)(k,t)\big|^2+\epsilon\Big),\qquad f=1,\dots,128, \tag{1}
+X(f,t)=\max\Big(10\log_{10}\frac{E(f,t)}{\max_{f',t'}E(f',t')},\;-80\Big),\qquad E(f,t)=\sum_{k} B_f(k)\,\big|\mathrm{STFT}(\tilde x)(k,t)\big|^2, \tag{1}
 $$
-where $B_f$ are triangular Mel filters (HTK scale, $f_{\mathrm{mel}}=2595\log_{10}(1+f/700)$) spanning 0–11,025 Hz.
-5. **Fixed-length segments.** The operator $\mathcal R$ maps each variable-length spectrogram $\mathbb R^{128\times T}$ to $S$ segments of $128\times 229$ by sliding windows of 229 frames with hop $h_R$. The last incomplete window is right-padded with the training-set minimum when it covers more than 50% of a window, and discarded otherwise. `[TBD: confirm; the NeuroVoz maps in the preliminary paper span about 650 frames, inconsistent with a 229-frame input.]` Recording- and subject-level probabilities were obtained by aggregating segment probabilities (Section 2.7).
+for $f=1,\dots,128$, where $B_f$ are triangular Mel filters spanning 0–11,025 Hz. The STFT used a 2,048-sample Hann window (92.9 ms) with a hop of 512 samples (23.2 ms) and centred frames. The decibel reference is the maximum of each recording, so the level is normalized per recording and the dynamic range is limited to 80 dB.
+6. **Fixed-length segments.** The operator $\mathcal R$ cuts each spectrogram $\mathbb R^{128\times T}$ into windows of 229 frames (5.3 s) with a hop of 115 frames (50% overlap). A final partial window is kept, right-padded with the recording minimum (−80 dB, i.e., silence), only if at least 50% of it is real signal. A recording shorter than one window yields a single padded window, so no recording is discarded. Recordings are never stretched or truncated. In the preliminary study, short recordings were stretched by spectral interpolation (`ifft(fft(x), n)`), which alters $F_0$ and speech rate. Recording- and subject-level probabilities were obtained by aggregating segment probabilities (Section 2.7).
+7. **Input standardization.** Each Mel band was standardized with the mean and SD computed on the training segments of the corresponding split.
 
 **Table 3.** Preprocessing parameters.
 
 | Parameter | Value |
 |---|---|
 | Sampling rate | 22,050 Hz |
-| Amplitude normalization | min–max per recording |
-| STFT window / length / hop | `[TBD: Hann / 2048 / 512?]` |
+| Silence trimming | leading/trailing, 30 dB below peak `[TBD: confirm]` |
+| Amplitude normalization | peak, per recording |
+| STFT window / length / hop | Hann / 2,048 / 512 samples (92.9 / 23.2 ms), centred |
 | Mel bands / range | 128 / 0–11,025 Hz |
-| Log compression | $\log(\cdot+\epsilon)$ or dB re max `[TBD]` |
-| Segment length | 229 frames (≈ 5.3 s if hop = 512) `[TBD]` |
-| Segment hop $h_R$ | `[TBD]` |
-| Input standardization | per-Mel-band $\mu_f,\sigma_f$ from the training partition `[TBD]` |
+| Log compression | dB re recording maximum, floor −80 dB |
+| Segment length | 229 frames (5.3 s) |
+| Segment hop | 115 frames (50% overlap) |
+| Padding | recording minimum; partial window kept if ≥ 50% real |
+| Input standardization | per Mel band, training-partition mean and SD |
 
 ---
 
@@ -129,12 +135,12 @@ where $B_f$ are triangular Mel filters (HTK scale, $f_{\mathrm{mel}}=2595\log_{1
 
 CTNet maps a log-Mel segment $X\in\mathbb R^{128\times229}$ to class probabilities in four steps (Figure 1, Table 4):
 
-1. **Convolutional stem.** Two convolutional blocks produce $C\in\mathbb R^{14\times 25\times 64}$. `[TBD: kernel size, stride, normalization, activation, and whether depth-wise convolutions are used.]` The output dimensions are consistent with 3×3 pooling per block.
-2. **Tokenization.** Reshaping $C$ gives $N_{\text{tok}}=14\times25=350$ tokens of dimension $d=64$, and positional encodings are added:
+1. **Convolutional stem.** Two blocks, each a 3×3 convolution with 64 filters and same padding, batch normalization, a nonlinearity (GELU or ReLU, tuned) and 3×3 average pooling with stride 3, produce $C\in\mathbb R^{14\times 25\times 64}$.
+2. **Tokenization.** Reshaping $C$ gives $N_{\text{tok}}=14\times25=350$ tokens of dimension $d=64$, and a learned positional embedding $E_{\text{pos}}\in\mathbb R^{350\times64}$ is added. The preliminary model had no positional encoding, which makes self-attention invariant to the order of the tokens.
 $$
 H^{(0)}=\mathcal V(C)+E_{\text{pos}}\in\mathbb R^{350\times 64}. \tag{2}
 $$
-3. **Transformer encoder.** $L$ pre-/post-norm `[TBD]` encoder layers with multi-head self-attention, a feed-forward network, residual connections and layer normalization produce $H^{(L)}=[h_1,\dots,h_{350}]^\top$, with $h_i\in\mathbb R^{64}$.
+3. **Transformer encoder.** $L=1$ post-norm encoder layer (as in the preliminary study) with multi-head self-attention ($H$ heads, key dimension $d/H$), a two-layer feed-forward network, dropout, residual connections and layer normalization produce $H^{(L)}=[h_1,\dots,h_{350}]^\top$, with $h_i\in\mathbb R^{64}$.
 4. **Classification head.** Global average pooling followed by a linear layer:
 $$
 z=\frac{1}{350}\sum_{i=1}^{350}h_i\in\mathbb R^{64},\qquad o_c=w_c^\top z+b_c,\qquad \hat p(c\mid X)=\operatorname{softmax}(o)_c, \tag{3}
@@ -150,13 +156,13 @@ This head replaces the flatten–dense head of the preliminary study, which had 
 | Block | Output | Specification |
 |---|---|---|
 | Input (log-Mel) | 128×229×1 | Section 2.5 |
-| Conv block 1 | 42×76×64 | `[TBD]` |
-| Conv block 2 | 14×25×64 | `[TBD]` |
-| Tokens + positional encoding | 350×64 | `[TBD: learned 2-D / sinusoidal]` |
-| Transformer encoder | 350×64 | $L$ = `[TBD]`, heads $\in\{1,2,4\}$ (tuned), FFN = `[TBD]`, dropout (tuned) |
+| Conv block 1 | 42×76×64 | Conv 3×3 (64) – BN – GELU/ReLU – AvgPool 3×3 |
+| Conv block 2 | 14×25×64 | Conv 3×3 (64) – BN – GELU/ReLU – AvgPool 3×3 |
+| Tokens + positional encoding | 350×64 | Learned embedding (22,400 parameters) |
+| Transformer encoder | 350×64 | $L=1$, post-norm; heads $\in\{1,2,4\}$, FFN $\in\{64,128,256\}$, dropout $\in\{0.1,0.2,0.3\}$ (tuned) |
 | Global average pooling | 64 | – |
 | Linear + softmax | 2 | 130 parameters |
-| **Total trainable parameters** | | `[TBD]` |
+| **Total parameters** | | 85,826–110,594 depending on the FFN width (94,082 with FFN = 128); 256 of them are non-trainable BN statistics |
 
 ---
 
@@ -207,9 +213,9 @@ $q_J$ is a probability distribution over the 350 cells. The fusion has no learna
 
 ## 2.9. Comparator Explanation Methods
 
-- **LRP for Transformers (AttnLRP)** [Achtibat et al., 2024]. `[TBD: implementation. Note: tf_keras_vis.saliency.Saliency, used in the preliminary study, computes vanilla gradient saliency, not LRP.]`
+- **LRP for Transformers (AttnLRP)** [Achtibat et al., 2024]. `[TBD: implementation; not yet in ctnet_pd.]` The maps labelled LRP in the preliminary study came from `tf_keras_vis.saliency.Saliency`, which computes vanilla gradient saliency. Gradient saliency $|\partial o_\delta/\partial X|$ is reported here under its correct name.
 - **Score-CAM** [Wang et al., 2020] on the stem output.
-- **Gradient-weighted attention rollout** [Chefer et al., 2021; Abnar & Zuidema, 2020].
+- **Gradient-weighted attention rollout** [Chefer et al., 2021; Abnar & Zuidema, 2020]. `[TBD: not yet in ctnet_pd.]`
 
 Grad-CAM is not an independent check of $q_{\text{pre}}$, which is itself Grad-CAM. AttnLRP, Score-CAM and the perturbation tests serve as the independent controls.
 
@@ -219,7 +225,7 @@ Grad-CAM is not an independent check of $q_{\text{pre}}$, which is itself Grad-C
 
 ### 2.10.1. Acoustic concept maps
 
-For each segment, $K$ soft concept maps $\Pi_k^{\text{high}}\in[0,1]^{128\times229}$ were computed from the signal alone with Praat/Parselmouth [Boersma & Weenink; Jadoul et al., 2018] (Table 5). Their definition, and every parameter in Table 5, was **frozen before any prior-regularized model was trained**.
+For each segment, $K$ soft concept maps $\Pi_k^{\text{high}}\in[0,1]^{128\times229}$ were computed from the preprocessed signal alone (Table 5): $F_0$ and voicing with probabilistic YIN (pYIN, 50–500 Hz) on the same frame grid as the spectrogram, and formants with Praat/Parselmouth [Boersma & Weenink; Jadoul et al., 2018]. Concept maps were segmented with the same operator $\mathcal R$ (padding carries no prior). Their definition, and every parameter in Table 5, was **frozen before any prior-regularized model was trained**.
 
 The concepts were justified only by the literature on hypokinetic dysarthria. They were **not** derived from the saliency maps of the preliminary study, which were obtained on the same corpora with the same model family and would make validation circular.
 
@@ -227,10 +233,10 @@ The concepts were justified only by the literature on hypokinetic dysarthria. Th
 
 | $k$ | Concept | Spectro-temporal support of $\Pi_k^{\text{high}}$ | Rationale (cite) |
 |---|---|---|---|
-| 1 | Phonatory band | Voiced frames; Mel bins covering $F_0(t)$ to $3F_0(t)$ (Gaussian tolerance $\pm\sigma_f$) | Jitter, $F_0$ variability, monopitch [Little 2009; Rusz 2011] |
-| 2 | Formant regions | Voiced frames; bands around $F_1(t)$ and $F_2(t)$ (± bandwidth) | Articulatory undershoot, vowel space [Skodda; Rusz] |
-| 3 | Voicing onset/offset transitions | All bins, frames within $\pm w$ of voicing changes (smooth temporal window) | Onset/offset deficits in DDK [Vásquez-Correa et al.] |
-| 4 | Aperiodic energy | Voiced frames; bins above `[TBD]` kHz | HNR, breathiness [Tsanas; Rusz] |
+| 1 | Phonatory band | Voiced frames; Mel bins covering $F_0(t)$ to $3F_0(t)$ (Gaussian edges, SD 2 semitones) | Jitter, $F_0$ variability, monopitch [Little 2009; Rusz 2011] |
+| 2 | Formant regions | Voiced frames; Gaussian bands (SD 150 Hz) around $F_1(t)$ and $F_2(t)$ | Articulatory undershoot, vowel space [Skodda; Rusz] |
+| 3 | Voicing onset/offset transitions | All bins; triangular window of ±3 frames around voicing changes | Onset/offset deficits in DDK [Vásquez-Correa et al.] |
+| 4 | Aperiodic energy | Voiced frames; bins above 4 kHz `[TBD: confirm]` | HNR, breathiness [Tsanas; Rusz] |
 
 Pause-based prosodic concepts were excluded because silences are trimmed during preprocessing.
 
@@ -402,10 +408,10 @@ Every baseline used identical folds, segments, aggregation, metrics and informat
 
 | Model | Input | Training |
 |---|---|---|
-| SVM (RBF) | eGeMAPS [Eyben et al., 2016] + Praat measures, per recording | Inner-CV grid over $C,\gamma$ |
-| CNN (ResNet-18) | Same log-Mel segments | Fine-tuned, inner-CV selected |
+| SVM (RBF) | eGeMAPS [Eyben et al., 2016] functionals, per recording | Subject-grouped inner 4-fold grid over $C\in\{0.1,1,10,100\}$, $\gamma$ |
+| CNN-only | Same log-Mel segments | CTNet stem + GAP + linear head, no Transformer (60,610 parameters); same search |
 | AST, frozen | Log-Mel per AST specification [Gong et al., 2021] | AudioSet-pretrained embeddings + logistic regression |
-| Speech SSL, frozen (**recommended**) | Raw waveform, 16 kHz | WavLM-Base+ or XLS-R embeddings (mean-pooled, best layer chosen in inner CV) + logistic regression |
+| Speech SSL, frozen (**recommended**) | Raw waveform, 16 kHz | WavLM-Base+ or XLS-R embeddings (mean-pooled, best layer chosen in subject-grouped inner CV) + logistic regression |
 | CTNet-Flatten | Same log-Mel segments | Preliminary-study head, as an ablation of the GAP head |
 
 `[TBD: fine-tuned AST only if the computational budget allows.]`
@@ -438,15 +444,15 @@ The **Random-Prior** control used the prior of a different, randomly chosen trai
 
 ## 2.14. Training Configuration
 
-- **Optimization.** Adam, batch size 32, at most 100 epochs, ReduceLROnPlateau, and checkpoint selection on the **inner-validation** subject-level loss.
-- **Hyperparameter search.** Bayesian optimization (Keras Tuner) with the same budget for all models, `[TBD]` trials. The search space was:
+- **Optimization.** Adam, batch size 32, at most 100 epochs, ReduceLROnPlateau on the inner-validation loss (factor 0.5, patience 5, minimum 10⁻⁶), early stopping (patience 15) restoring the weights with the lowest **inner-validation** subject-balanced loss. In the preliminary code the minimum learning rate equalled the initial one, so the schedule never acted.
+- **Hyperparameter search.** Bayesian optimization (KerasTuner) on the inner split, objective inner-validation loss, 10 trials of at most 40 epochs, with the same budget for all models. The search space was:
   - learning rate $\in\{10^{-3},4\cdot10^{-4},10^{-4}\}$;
   - dropout $\in\{0.1,0.2,0.3\}$;
   - attention heads $\in\{1,2,4\}$;
   - activation $\in\{\text{ReLU},\text{GELU}\}$;
   - $\lambda_P,\lambda_C\in\{0.01,0.1,1\}$, prior variants only.
-- **Seeds.** `[TBD]`, reported per repetition.
-- **Software and hardware.** Python 3.10, TensorFlow `[TBD]`, Keras Tuner `[TBD]`, Parselmouth `[TBD]`, openSMILE `[TBD]`; Kaggle, 2× NVIDIA T4. Training time per variant was reported.
+- **Seeds.** Outer folds of repetition $r$ use seed $42+r$; the model of repetition $r$, fold $k$ uses seed $42+1000r+k$.
+- **Software and hardware.** Python 3, TensorFlow 2 with Keras 3, KerasTuner, librosa, scikit-learn, Parselmouth and openSMILE; Kaggle, 2× NVIDIA T4. `[TBD: exact versions, logged by the experiment notebook to config_used.json.]` Training time per variant was reported.
 
 ---
 
@@ -491,17 +497,20 @@ where $E_{sm}\in\{0,1\}$ indicates a correct prediction and $u_s\sim\mathcal N(0
 
 ## 2.17. Reproducibility
 
-Code, fold assignments (subject IDs per fold and repetition), frozen concept definitions and trained weights will be released at `[TBD: repository]`. The corpora are available from their owners under their respective licenses.
+Code (`ctnet_pd/`), the complete configuration, fold assignments (subject IDs per fold and repetition, `folds.csv`), frozen concept definitions and trained weights will be released at `[TBD: public repository]`. The corpora are available from their owners under their respective licenses.
 
 ---
 
 ### Pending items before submission (checklist)
 
-- [ ] STFT parameters, log compression, operator $\mathcal R$ and segment hop (Table 3)
-- [ ] Convolutional-block specification, $L$, FFN size, positional encoding (Table 4)
+- [x] STFT parameters, log compression, operator $\mathcal R$ and segment hop (Table 3)
+- [x] Convolutional-block specification, $L$, FFN size, positional encoding (Table 4)
+- [ ] Confirm the silence-trimming threshold and the aperiodic cutoff on pilot data
+- [ ] Attention rollout and AttnLRP comparators
 - [ ] Final acoustic concepts and their parameters (Table 5), **frozen before the prior experiments**
 - [ ] Recompute Table 1 from metadata; verify NeuroVoz recording conditions and PC-GITA task selection
 - [ ] Real LRP implementation (AttnLRP)
 - [ ] Margins of the acceptance criterion (Section 2.10.4)
-- [ ] Number of Bayesian-optimization trials and seeds
+- [x] Number of Bayesian-optimization trials and seeds
+- [ ] Exact software versions (from `config_used.json`)
 - [ ] MDPI back matter: IRB, informed consent, data availability, conflicts of interest
