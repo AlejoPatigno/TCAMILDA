@@ -1,0 +1,101 @@
+"""CTNet: convolutional stem -> token Transformer -> GAP + linear head (Section 2.6).
+
+Layer names are part of the interface used by the explanation code:
+``stem_out`` (C, 14x25x64), ``encoder_out`` (H^(L), 350x64) and ``logits`` (o).
+The model outputs logits; probabilities are ``softmax(logits)``.
+"""
+
+from __future__ import annotations
+
+import keras
+from keras import layers
+
+from .config import Config
+
+
+@keras.saving.register_keras_serializable(package="ctnet_pd")
+class PositionalEmbedding(layers.Layer):
+    """Learned positional embedding added to the token sequence (Eq. 2)."""
+
+    def build(self, input_shape):
+        self.pos = self.add_weight(
+            name="pos", shape=(input_shape[1], input_shape[2]),
+            initializer=keras.initializers.RandomNormal(stddev=0.02), trainable=True,
+        )
+
+    def call(self, x):
+        return x + self.pos
+
+
+def build_ctnet(input_shape=(128, 229, 1), n_conv_blocks=2, conv_filters=64, kernel_size=3,
+                pool_size=3, activation="gelu", positional_encoding="learned",
+                n_transformer_layers=1, num_heads=2, key_dim=None, ffn_dim=128, dropout=0.1,
+                head="gap", flatten_dense_units=128, n_classes=2, name="ctnet") -> keras.Model:
+    inputs = keras.Input(shape=input_shape, name="spec")
+    x = inputs
+    for b in range(n_conv_blocks):
+        x = layers.Conv2D(conv_filters, kernel_size, padding="same", name=f"conv{b + 1}")(x)
+        x = layers.BatchNormalization(name=f"bn{b + 1}")(x)
+        x = layers.Activation(activation, name=f"act{b + 1}")(x)
+        pool_name = "stem_out" if b == n_conv_blocks - 1 else f"pool{b + 1}"
+        x = layers.AveragePooling2D(pool_size, name=pool_name)(x)
+
+    rows, cols, d = x.shape[1], x.shape[2], x.shape[3]
+    x = layers.Reshape((rows * cols, d), name="tokens")(x)
+    if positional_encoding == "learned":
+        x = PositionalEmbedding(name="pos_embed")(x)
+
+    kd = key_dim or d // num_heads
+    for l in range(n_transformer_layers):
+        p = f"enc{l + 1}"
+        attn = layers.MultiHeadAttention(num_heads=num_heads, key_dim=kd, dropout=dropout,
+                                         name=f"{p}_mha")(x, x)
+        attn = layers.Dropout(dropout, name=f"{p}_drop1")(attn)
+        x = layers.LayerNormalization(name=f"{p}_ln1")(layers.Add(name=f"{p}_add1")([x, attn]))
+        ff = layers.Dense(ffn_dim, activation=activation, name=f"{p}_ffn1")(x)
+        ff = layers.Dense(d, name=f"{p}_ffn2")(ff)
+        ff = layers.Dropout(dropout, name=f"{p}_drop2")(ff)
+        x = layers.LayerNormalization(name=f"{p}_ln2")(layers.Add(name=f"{p}_add2")([x, ff]))
+    x = layers.Identity(name="encoder_out")(x)
+
+    if head == "gap":
+        z = layers.GlobalAveragePooling1D(name="gap")(x)
+    elif head == "flatten":
+        z = layers.Flatten(name="flatten")(x)
+        z = layers.Dense(flatten_dense_units, activation="relu", name="head_dense")(z)
+        z = layers.Dropout(dropout, name="head_drop")(z)
+    else:
+        raise ValueError(head)
+    logits = layers.Dense(n_classes, name="logits")(z)
+    return keras.Model(inputs, logits, name=name)
+
+
+def model_kwargs(cfg: Config, hp: dict | None = None) -> dict:
+    """Builder arguments from the config, with tuned hyperparameters taking precedence."""
+    m = cfg.model
+    kw = dict(
+        input_shape=(cfg.spectrogram.n_mels, cfg.segmentation.frames, 1),
+        n_conv_blocks=m.n_conv_blocks, conv_filters=m.conv_filters, kernel_size=m.kernel_size,
+        pool_size=m.pool_size, activation=m.activation, positional_encoding=m.positional_encoding,
+        n_transformer_layers=m.n_transformer_layers, num_heads=m.num_heads, key_dim=m.key_dim,
+        ffn_dim=m.ffn_dim, dropout=m.dropout, head=m.head,
+        flatten_dense_units=m.flatten_dense_units, n_classes=m.n_classes,
+    )
+    for key in ("activation", "num_heads", "ffn_dim", "dropout"):
+        if hp and key in hp:
+            kw[key] = hp[key]
+    return kw
+
+
+def explainer_model(model: keras.Model) -> keras.Model:
+    """Same weights, three outputs: stem activations, encoder tokens and logits."""
+    return keras.Model(
+        model.inputs,
+        [model.get_layer("stem_out").output, model.get_layer("encoder_out").output,
+         model.get_layer("logits").output],
+        name=f"{model.name}_explainer",
+    )
+
+
+def head_parameter_count(model: keras.Model) -> int:
+    return int(sum(w.numpy().size for w in model.get_layer("logits").weights))
