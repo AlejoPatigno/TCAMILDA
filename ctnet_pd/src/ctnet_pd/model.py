@@ -70,6 +70,61 @@ def build_ctnet(input_shape=(128, 229, 1), n_conv_blocks=2, conv_filters=64, ker
     return keras.Model(inputs, logits, name=name)
 
 
+# ImageNet backbones for the Experiment II CNN baselines, with the scaling that maps
+# band-standardized log-Mel values (roughly in [-3, 3]) to each backbone's expected range.
+_BACKBONES = {
+    # keras.applications.ResNet50 expects caffe-style mean-subtracted inputs (about +-128)
+    "resnet50": ("ResNet50", 64.0, 0.0),
+    # EfficientNetB0 rescales [0, 255] internally
+    "efficientnetb0": ("EfficientNetB0", 64.0, 128.0),
+}
+
+
+def build_pretrained_cnn(input_shape=(128, 229, 1), backbone="resnet50", weights="imagenet",
+                         dropout=0.2, n_classes=2, name=None) -> keras.Model:
+    """ImageNet CNN fine-tuned on log-Mel segments (Experiment II).
+
+    The single log-Mel channel is replicated to three channels; the head is
+    GAP -> dropout -> linear, as in CTNet, and the output layer is also named
+    ``logits``.
+    """
+    if backbone not in _BACKBONES:
+        raise ValueError(f"backbone must be one of {sorted(_BACKBONES)}")
+    cls_name, scale, offset = _BACKBONES[backbone]
+    inputs = keras.Input(shape=input_shape, name="spec")
+    x = layers.Concatenate(name="to_rgb")([inputs, inputs, inputs])
+    x = layers.Rescaling(scale, offset, name="to_backbone_range")(x)
+    base = getattr(keras.applications, cls_name)(include_top=False, weights=weights,
+                                                 input_shape=input_shape[:2] + (3,))
+    x = base(x)
+    x = layers.GlobalAveragePooling2D(name="gap")(x)
+    x = layers.Dropout(dropout, name="head_drop")(x)
+    logits = layers.Dense(n_classes, name="logits")(x)
+    return keras.Model(inputs, logits, name=name or backbone)
+
+
+ARCHITECTURES = ("ctnet",) + tuple(_BACKBONES)
+
+# Hyperparameters that each architecture actually uses (the rest of the search space is skipped).
+TUNABLE = {
+    "ctnet": ("learning_rate", "dropout", "num_heads", "activation", "ffn_dim"),
+    "resnet50": ("learning_rate", "dropout"),
+    "efficientnetb0": ("learning_rate", "dropout"),
+}
+
+
+def build_model(cfg: Config, hp: dict | None = None) -> keras.Model:
+    """Model registry: CTNet (and its ablations) or an ImageNet CNN baseline."""
+    arch = cfg.model.architecture
+    if arch == "ctnet":
+        return build_ctnet(**model_kwargs(cfg, hp))
+    return build_pretrained_cnn(
+        input_shape=(cfg.spectrogram.n_mels, cfg.segmentation.frames, 1), backbone=arch,
+        weights=cfg.model.pretrained_weights, dropout=(hp or {}).get("dropout", cfg.model.dropout),
+        n_classes=cfg.model.n_classes,
+    )
+
+
 def model_kwargs(cfg: Config, hp: dict | None = None) -> dict:
     """Builder arguments from the config, with tuned hyperparameters taking precedence."""
     m = cfg.model

@@ -93,6 +93,10 @@ def validate_config(cfg: Config) -> None:
         bad = [h for h in heads if d % h]
         if bad:
             raise ValueError(f"num_heads {bad} do not divide d={d}; set model.key_dim explicitly")
+    if cfg.model.architecture not in ("ctnet", "resnet50", "efficientnetb0"):
+        raise ValueError("model.architecture must be ctnet, resnet50 or efficientnetb0")
+    if cfg.prior.enabled and cfg.model.architecture != "ctnet":
+        raise ValueError("The acoustic prior is defined for CTNet only")
     if cfg.model.head not in ("gap", "flatten"):
         raise ValueError("model.head must be 'gap' or 'flatten'")
     if cfg.prior.map not in ("pre", "post", "joint"):

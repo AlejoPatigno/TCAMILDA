@@ -9,10 +9,29 @@ import numpy as np
 import pandas as pd
 
 from . import splits as S
-from .config import Config, token_grid
+from .config import Config, apply_overrides, token_grid, validate_config
 from .features import BandNormalizer
 from .metrics import aggregate, binary_metrics, youden_threshold
 from .training import (build_and_compile, clear_session, fit, predict_proba, sample_weights, tune)
+
+
+# Spectrogram-based models run through the same nested-CV pipeline (Experiments I-II).
+VARIANTS = {
+    "ctnet": [],
+    "cnn_only": ["model.n_transformer_layers=0"],
+    "ctnet_flatten": ["model.head=flatten"],
+    "resnet50": ["model.architecture=resnet50"],
+    "efficientnetb0": ["model.architecture=efficientnetb0"],
+}
+
+
+def variant_config(cfg: Config, variant: str) -> Config:
+    """Config for a named model variant (see VARIANTS)."""
+    if variant not in VARIANTS:
+        raise KeyError(f"Unknown variant {variant!r}; choose from {sorted(VARIANTS)}")
+    out = apply_overrides(cfg, VARIANTS[variant])
+    validate_config(out)
+    return out
 
 
 def _subset(X, seg, rows):

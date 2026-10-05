@@ -18,7 +18,7 @@ import pandas as pd
 import tensorflow as tf
 
 from .config import Config
-from .model import build_ctnet, explainer_model, model_kwargs
+from .model import TUNABLE, build_model, explainer_model
 from .xai import logit_contrast
 
 
@@ -81,7 +81,7 @@ def build_and_compile(cfg: Config, hp: dict | None = None, seed: int | None = No
     if seed is not None:
         keras.utils.set_random_seed(seed)
     hp = hp or {}
-    model = build_ctnet(**model_kwargs(cfg, hp))
+    model = build_model(cfg, hp)
     lr = hp.get("learning_rate", cfg.training.learning_rate)
     if cfg.prior.enabled:
         trainer = PriorRegularizedTrainer(model, lambda_prior=hp.get("lambda_prior", cfg.prior.lambda_prior),
@@ -132,14 +132,12 @@ def tune(cfg: Config, X_tr, y_tr, w_tr, X_val, y_val, w_val, directory: str, pro
 
     space = cfg.tuning.search_space
 
+    tunable = TUNABLE[cfg.model.architecture]
+    if cfg.model.architecture == "ctnet" and cfg.model.n_transformer_layers == 0:
+        tunable = ("learning_rate", "activation")  # CNN-only ablation (no dropout layer)
+
     def build(hp):
-        values = {
-            "learning_rate": hp.Choice("learning_rate", space["learning_rate"]),
-            "dropout": hp.Choice("dropout", space["dropout"]),
-            "num_heads": hp.Choice("num_heads", space["num_heads"]),
-            "activation": hp.Choice("activation", space["activation"]),
-            "ffn_dim": hp.Choice("ffn_dim", space["ffn_dim"]),
-        }
+        values = {key: hp.Choice(key, space[key]) for key in tunable}
         if cfg.prior.enabled:
             values["lambda_prior"] = hp.Choice("lambda_prior", space["lambda_prior"])
         return build_and_compile(cfg, values)

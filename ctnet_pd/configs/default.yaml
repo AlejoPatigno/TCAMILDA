@@ -68,6 +68,8 @@ normalization:
 
 # ---------------------------------------------------- 2.6 CTNet (Table 4)
 model:
+  architecture: ctnet       # ctnet | resnet50 | efficientnetb0 (Exp. II CNN baselines)
+  pretrained_weights: imagenet   # backbone weights for resnet50 / efficientnetb0 (null = random)
   n_conv_blocks: 2          # fixed: gives the 14 x 25 token grid
   conv_filters: 64          # fixed: token dimension d = 64
   kernel_size: 3
@@ -82,6 +84,20 @@ model:
   head: gap                 # gap (130 parameters) | flatten (preliminary-study head)
   flatten_dense_units: 128  # only used when head == flatten
   n_classes: 2
+
+# ------------------------------------------- Exp. II baselines (Table 6)
+baselines:
+  n_inner_folds: 4          # subject-grouped inner CV for the scikit-learn baselines
+  svm_C: [0.1, 1.0, 10.0, 100.0]
+  svm_gamma: [scale, 0.001, 0.01, 0.1]
+  logreg_C: [0.001, 0.01, 0.1, 1.0]
+  embedding_models:         # frozen pretrained encoders + logistic-regression probe
+    wavlm: microsoft/wavlm-base-plus
+    xlsr: facebook/wav2vec2-xls-r-300m
+    ast: MIT/ast-finetuned-audioset-10-10-0.4593
+  chunk_seconds: 10.0       # long recordings are embedded in chunks and averaged, never truncated
+  praat_f0_min: 75.0
+  praat_f0_max: 500.0
 
 # ---------------------------------------------- 2.14 Training configuration
 training:

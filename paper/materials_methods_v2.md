@@ -402,19 +402,29 @@ Repeated nested CV (Section 2.4) was run separately in PC-GITA and NeuroVoz, for
 
 ### Experiment II — Same-protocol baselines
 
-Every baseline used identical folds, segments, aggregation, metrics and information boundary, with an equal hyperparameter-search budget (Table 6). Values from studies with other protocols were not used for comparison.
+Every baseline used the same outer folds (the same test subjects in every repetition), the same subject-level aggregation and metrics, and the same information boundary (Table 6). Values reported by studies with other protocols were not used for comparison. The baselines fall into three groups.
+
+- **Spectrogram models.** These were trained on the same log-Mel segments through the same nested pipeline as CTNet: band standardization, subject-balanced loss, early stopping on the inner split, and Bayesian search with the same budget restricted to the hyperparameters each model has.
+- **Handcrafted-feature models.** Features were computed per recording from the same preprocessed audio.
+- **Frozen pretrained encoders.** Mean-pooled hidden states of every layer were computed per recording. Recordings longer than 10 s were embedded in 10-s chunks and averaged with weights proportional to chunk length, rather than truncated.
+
+For the last two groups, the classifier, its regularization and (for encoders) the layer were selected by a stratified 4-fold inner CV grouped by subject, maximizing AUROC. The inner CV used median imputation and standardization fitted on the training folds, class-balanced weights, and sample weights giving each subject the same total weight. Recording probabilities were then aggregated per subject as in Section 2.7.
 
 **Table 6.** Baselines.
 
 | Model | Input | Training |
 |---|---|---|
-| SVM (RBF) | eGeMAPS [Eyben et al., 2016] functionals, per recording | Subject-grouped inner 4-fold grid over $C\in\{0.1,1,10,100\}$, $\gamma$ |
-| CNN-only | Same log-Mel segments | CTNet stem + GAP + linear head, no Transformer (60,610 parameters); same search |
-| AST, frozen | Log-Mel per AST specification [Gong et al., 2021] | AudioSet-pretrained embeddings + logistic regression |
-| Speech SSL, frozen (**recommended**) | Raw waveform, 16 kHz | WavLM-Base+ or XLS-R embeddings (mean-pooled, best layer chosen in subject-grouped inner CV) + logistic regression |
-| CTNet-Flatten | Same log-Mel segments | Preliminary-study head, as an ablation of the GAP head |
+| CNN-only | Same log-Mel segments | CTNet stem + GAP + linear head, no Transformer (60,610 parameters); searched: learning rate, activation |
+| CTNet-Flatten | Same log-Mel segments | Preliminary-study head (flatten → Dense(128) → Dense(2)), as an ablation of the GAP head |
+| ResNet-50 | Same log-Mel segments, replicated to 3 channels | ImageNet-pretrained [He et al., 2016], fine-tuned; GAP + dropout + linear head; searched: learning rate, dropout |
+| EfficientNet-B0 | Same log-Mel segments, replicated to 3 channels | ImageNet-pretrained [Tan & Le, 2019], fine-tuned; as ResNet-50 |
+| SVM (RBF), eGeMAPS | eGeMAPSv02 functionals (88) [Eyben et al., 2016], per recording | $C\in\{0.1,1,10,100\}$, $\gamma\in\{\text{scale},10^{-3},10^{-2},10^{-1}\}$ |
+| SVM (RBF), Praat | 18 classical measures [Boersma & Weenink; Jadoul et al., 2018]: $F_0$ mean and SD (Hz, semitones), jitter (local, RAP, PPQ5), shimmer (local, APQ3, APQ5), HNR, $F_1$/$F_2$ mean and SD, intensity mean and SD, voiced fraction, duration | As above |
+| WavLM-Base+, frozen | Waveform, 16 kHz [Chen et al., 2022] | Layer-wise mean pooling; logistic regression, $C\in\{10^{-3},10^{-2},10^{-1},1\}$; layer chosen in inner CV |
+| XLS-R 300M, frozen | Waveform, 16 kHz [Babu et al., 2022] | As WavLM |
+| AST, frozen | Kaldi filterbank per AST specification [Gong et al., 2021], AudioSet-fine-tuned checkpoint | As WavLM |
 
-`[TBD: fine-tuned AST only if the computational budget allows.]`
+The ImageNet backbones of the preliminary study (ResNet-18, Swin, ViT) are not available as Keras applications. ResNet-50 and EfficientNet-B0 represent the ImageNet-transfer family, and AST represents Transformers on spectrograms. Fine-tuning AST was not attempted because of its computational cost.
 
 ### Experiment III — Two-way external validation
 
@@ -423,6 +433,7 @@ The two directions were PC-GITA → NeuroVoz and NeuroVoz → PC-GITA.
 - **Source training.** Hyperparameters were selected by inner CV on the source cohort. The final model was trained on all source subjects for the median number of epochs selected in the inner folds. No target subject was used for fitting, early stopping, tuning or choosing $\lambda$.
 - **Analyses.** The primary analysis was task-matched (/pa-ta-ka/ and monologue, separately); the secondary analysis used all tasks.
 - **Thresholds.** Both $\tau=0.5$ and the Youden-optimal threshold estimated on source out-of-fold predictions were reported, together with threshold-free metrics.
+- **Baselines.** Every baseline of Table 6 was validated externally in the same way. For the handcrafted-feature and encoder baselines, the hyperparameters and the encoder layer were selected by inner CV on the source cohort only.
 
 ### Experiment IV — Ablation of the prior
 
@@ -513,4 +524,5 @@ Code (`ctnet_pd/`), the complete configuration, fold assignments (subject IDs pe
 - [ ] Margins of the acceptance criterion (Section 2.10.4)
 - [x] Number of Bayesian-optimization trials and seeds
 - [ ] Exact software versions (from `config_used.json`)
+- [ ] Check that the ImageNet weights download in the Kaggle session (internet on)
 - [ ] MDPI back matter: IRB, informed consent, data availability, conflicts of interest
