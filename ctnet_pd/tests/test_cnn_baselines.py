@@ -16,10 +16,10 @@ def test_pretrained_cnn_shapes(cfg, arch):
 
 
 def test_variant_registry(cfg):
-    assert set(VARIANTS) == {"ctnet", "cnn_only", "ctnet_flatten", "resnet50", "efficientnetb0"}
+    assert set(VARIANTS) == {"ctnet", "cnn_only", "ctnet_flatten", "resnet50", "efficientnetb0", "vit", "swin"}
     assert variant_config(cfg, "cnn_only").model.n_transformer_layers == 0
     with pytest.raises(KeyError):
-        variant_config(cfg, "vit")
+        variant_config(cfg, "deit")
     bad = apply_overrides(cfg, ["prior.enabled=true"])
     with pytest.raises(ValueError):
         variant_config(bad, "resnet50")

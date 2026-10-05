@@ -13,6 +13,7 @@ from .config import Config, apply_overrides, token_grid, validate_config
 from .features import BandNormalizer
 from .metrics import aggregate, binary_metrics, youden_threshold
 from .training import (build_and_compile, clear_session, fit, predict_proba, sample_weights, tune)
+from . import vision
 
 
 # Spectrogram-based models run through the same nested-CV pipeline (Experiments I-II).
@@ -22,6 +23,8 @@ VARIANTS = {
     "ctnet_flatten": ["model.head=flatten"],
     "resnet50": ["model.architecture=resnet50"],
     "efficientnetb0": ["model.architecture=efficientnetb0"],
+    "vit": ["model.architecture=vit"],      # PyTorch (vision.py), preliminary-study baseline
+    "swin": ["model.architecture=swin"],    # PyTorch (vision.py), preliminary-study baseline
 }
 
 
@@ -60,6 +63,11 @@ def train_one(cfg: Config, X, seg, train_subj, val_subj, priors=None, seed=0, tu
     w_val = sample_weights(seg_val, t.subject_balanced, t.class_balanced)
     y_tr, y_val = seg_tr["label"].to_numpy(), seg_val["label"].to_numpy()
     p_tr, p_val = _prior_subset(priors, r_tr), _prior_subset(priors, r_val)
+
+    if cfg.model.architecture in vision.TORCH_ARCHITECTURES:
+        model, hp, best_epoch = vision.train(cfg, X_tr, y_tr, w_tr, X_val, y_val, w_val, seed=seed,
+                                             work_dir=tune_dir)
+        return model, norm, hp, best_epoch
 
     hp = {}
     if cfg.tuning.enabled:
@@ -107,6 +115,7 @@ def run_within_cohort(cfg: Config, X, seg: pd.DataFrame, out_dir: str | Path, va
             inner_tr, inner_val = S.inner_splits(train_subj, labels, cfg.cv.inner, cfg.cv.inner_val_fraction,
                                                  cfg.cv.n_inner_folds, seed)[0]
             S.assert_disjoint(inner_tr, inner_val, test_subj)
+            (out / "tuning").mkdir(exist_ok=True)
             model, norm, hp, best_epoch = train_one(
                 cfg, X, seg, inner_tr, inner_val, priors, seed, tune_dir=str(out / "tuning"),
                 tune_project=f"r{rep}_f{k}", verbose=verbose)
@@ -117,9 +126,14 @@ def run_within_cohort(cfg: Config, X, seg: pd.DataFrame, out_dir: str | Path, va
             pred = seg_te.assign(repeat=rep, fold=k, prob=predict_proba(model, X_te), variant=variant)
             pred.to_csv(pred_path, mode="a", header=not pred_path.exists(), index=False)
             if save_models:
-                base = getattr(model, "base", model)
-                base.save(out / f"model_r{rep}_f{k}.keras")
-                np.savez(out / f"norm_r{rep}_f{k}.npz", mean=norm.mean_, std=norm.std_)
+                if isinstance(model, vision.TorchModelHandle):
+                    model.save(out / f"model_r{rep}_f{k}.pt")
+                else:
+                    getattr(model, "base", model).save(out / f"model_r{rep}_f{k}.keras")
+                if norm is not None:
+                    np.savez(out / f"norm_r{rep}_f{k}.npz", mean=norm.mean_, std=norm.std_)
+            if isinstance(model, vision.TorchModelHandle):
+                model.cleanup()
             with open(runs_path, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps({"repeat": rep, "fold": k, "best_epoch": best_epoch, "hp": hp,
                                      "n_train_subjects": len(inner_tr), "n_val_subjects": len(inner_val),
@@ -143,22 +157,33 @@ def run_external(cfg: Config, X_src, seg_src, X_tgt, seg_tgt, out_dir: str | Pat
     labels = S.subject_table(seg_src).set_index("subject_id")["label"]
     all_src = labels.index.to_numpy()
     tr, va = S.inner_splits(all_src, labels, "holdout", cfg.cv.inner_val_fraction, cfg.cv.n_inner_folds, seed)[0]
-    _, _, hp, best_epoch = train_one(cfg, X_src, seg_src, tr, va, priors_src, seed,
-                                     tune_dir=str(out / "tuning"), tune_project="external", verbose=verbose)
+    (out / "tuning").mkdir(exist_ok=True)
+    selected, _, hp, best_epoch = train_one(cfg, X_src, seg_src, tr, va, priors_src, seed,
+                                            tune_dir=str(out / "tuning"), tune_project="external", verbose=verbose)
+    if isinstance(selected, vision.TorchModelHandle):
+        selected.cleanup()
     clear_session()
 
     norm = BandNormalizer().fit(X_src) if cfg.normalization.per_band else None
     Xs = norm.transform(X_src) if norm else np.asarray(X_src, dtype=np.float32)
     w = sample_weights(seg_src, cfg.training.subject_balanced, cfg.training.class_balanced)
-    model = build_and_compile(cfg, hp, seed=seed)
-    fit(model, Xs, seg_src["label"].to_numpy(), w, None, None, None, cfg, epochs=best_epoch,
-        prior_tr=None if priors_src is None else np.asarray(priors_src), early_stopping=False, seed=seed,
-        verbose=verbose)
+    if cfg.model.architecture in vision.TORCH_ARCHITECTURES:
+        model, _, _ = vision.train(cfg, Xs, seg_src["label"].to_numpy(), w, seed=seed, work_dir=out / "tuning",
+                                   learning_rates=[hp["learning_rate"]], epochs=best_epoch)
+    else:
+        model = build_and_compile(cfg, hp, seed=seed)
+        fit(model, Xs, seg_src["label"].to_numpy(), w, None, None, None, cfg, epochs=best_epoch,
+            prior_tr=None if priors_src is None else np.asarray(priors_src), early_stopping=False, seed=seed,
+            verbose=verbose)
 
     Xt = norm.transform(X_tgt) if norm else np.asarray(X_tgt, dtype=np.float32)
     pred = seg_tgt.assign(prob=predict_proba(model, Xt), variant=variant)
     pred.to_csv(out / "predictions_external.csv", index=False)
-    getattr(model, "base", model).save(out / "model_external.keras")
+    if isinstance(model, vision.TorchModelHandle):
+        model.save(out / "model_external.pt")
+        model.cleanup()
+    else:
+        getattr(model, "base", model).save(out / "model_external.keras")
 
     subj = aggregate(pred)
     thresholds = {"0.5": 0.5}

@@ -9,6 +9,7 @@ from ctnet_pd import baselines as B
 from ctnet_pd import splits as S
 from ctnet_pd.config import apply_overrides
 from ctnet_pd.metrics import aggregate, binary_metrics
+from tiny_models import save_tiny_wavlm
 
 
 def _vowel(path, f0, sr=22050, dur=1.5, jitter=0.0, seed=0):
@@ -80,18 +81,6 @@ def test_embedding_probe_selects_informative_layer(cfg):
     assert (ext["layer"] == 1).all()
 
 
-def _save_tiny_wavlm(path: str) -> None:
-    """Build and save a tiny random WavLM (runs in a spawned process, away from TensorFlow)."""
-    import transformers
-
-    config = transformers.WavLMConfig(hidden_size=16, num_hidden_layers=2, num_attention_heads=2,
-                                      intermediate_size=32, conv_dim=(8, 8), conv_stride=(5, 4),
-                                      conv_kernel=(10, 8), num_conv_pos_embeddings=16,
-                                      num_conv_pos_embedding_groups=2)
-    transformers.WavLMModel(config).save_pretrained(path)
-    transformers.Wav2Vec2FeatureExtractor(sampling_rate=16000).save_pretrained(path)
-
-
 @pytest.mark.skipif(importlib.util.find_spec("torch") is None or importlib.util.find_spec("transformers") is None,
                     reason="torch and transformers are optional")
 def test_pretrained_embeddings_chunked(cfg, tmp_path):
@@ -101,7 +90,7 @@ def test_pretrained_embeddings_chunked(cfg, tmp_path):
     index = pd.concat([index, pd.DataFrame([{"path": str(long_path), "recording_id": 99, "subject_id": "S99",
                                               "label": 0, "task_family": "monologue"}])], ignore_index=True)
     model_dir = tmp_path / "tiny_wavlm"
-    B._isolated(_save_tiny_wavlm, str(model_dir))
+    B._isolated(save_tiny_wavlm, str(model_dir))
     E = B.pretrained_embeddings(index, cfg, model_name=str(model_dir), cache_path=tmp_path / "emb" / "tiny")
     assert E.shape == (3, 3, 16) and np.isfinite(E).all()  # embeddings output + 2 layers
     assert not np.allclose(E[0], E[1])

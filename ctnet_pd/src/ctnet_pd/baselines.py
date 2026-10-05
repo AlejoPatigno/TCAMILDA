@@ -17,11 +17,6 @@ run through ``pipeline.run_within_cohort`` with ``pipeline.VARIANTS``.
 from __future__ import annotations
 
 import copy
-import os
-import pickle
-import subprocess
-import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -36,36 +31,15 @@ from sklearn.svm import SVC
 from . import splits as S
 from .config import Config
 from .features import load_audio
+from .isolation import run_isolated
 
 REC_COLUMNS = ["recording_id", "subject_id", "label", "task_family"]
 
 
 # ------------------------------------------------------------------ feature extraction
-#
-# openSMILE and PyTorch crash (heap corruption / segfault) when they run in a
-# process where TensorFlow is already loaded, which is the case in the
-# experiment notebook. Their extraction therefore runs in a fresh Python
-# interpreter that imports only this module, never TensorFlow. A plain
-# subprocess is used instead of multiprocessing "spawn", which would re-import
-# the caller's main script (and TensorFlow with it) in the child.
+# openSMILE and PyTorch run in a separate interpreter (see isolation.py).
 
-_CHILD = ("import pickle, sys; fn, args = pickle.load(open(sys.argv[1], 'rb')); "
-          "pickle.dump(fn(*args), open(sys.argv[2], 'wb'))")
-
-
-def _isolated(fn, *args):
-    """Run ``fn(*args)`` (a module-level function) in a separate interpreter and return its result."""
-    with tempfile.TemporaryDirectory() as tmp:
-        inp, out = Path(tmp) / "in.pkl", Path(tmp) / "out.pkl"
-        with open(inp, "wb") as fh:
-            pickle.dump((fn, args), fh)
-        env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in sys.path if p))
-        proc = subprocess.run([sys.executable, "-c", _CHILD, str(inp), str(out)], env=env,
-                              capture_output=True, text=True)
-        if proc.returncode != 0:
-            raise RuntimeError(f"Isolated extraction failed (exit {proc.returncode}):\n{proc.stderr[-3000:]}")
-        with open(out, "rb") as fh:
-            return pickle.load(fh)
+_isolated = run_isolated
 
 
 def _audio_cfg(cfg: Config, sample_rate: int) -> Config:

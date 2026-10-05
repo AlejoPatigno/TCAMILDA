@@ -418,13 +418,15 @@ For the last two groups, the classifier, its regularization and (for encoders) t
 | CTNet-Flatten | Same log-Mel segments | Preliminary-study head (flatten → Dense(128) → Dense(2)), as an ablation of the GAP head |
 | ResNet-50 | Same log-Mel segments, replicated to 3 channels | ImageNet-pretrained [He et al., 2016], fine-tuned; GAP + dropout + linear head; searched: learning rate, dropout |
 | EfficientNet-B0 | Same log-Mel segments, replicated to 3 channels | ImageNet-pretrained [Tan & Le, 2019], fine-tuned; as ResNet-50 |
+| ViT-B/16 | Same log-Mel segments, replicated to 3 channels and resized to 224×224 | ImageNet-pretrained [Dosovitskiy et al., 2021] (`google/vit-base-patch16-224`), fully fine-tuned with AdamW (weight decay 0.01); learning rate searched in $\{10^{-4}, 3\cdot10^{-5}, 10^{-5}\}$ |
+| Swin-T | As ViT-B/16 | ImageNet-pretrained [Liu et al., 2021] (`microsoft/swin-tiny-patch4-window7-224`); as ViT-B/16 |
 | SVM (RBF), eGeMAPS | eGeMAPSv02 functionals (88) [Eyben et al., 2016], per recording | $C\in\{0.1,1,10,100\}$, $\gamma\in\{\text{scale},10^{-3},10^{-2},10^{-1}\}$ |
 | SVM (RBF), Praat | 18 classical measures [Boersma & Weenink; Jadoul et al., 2018]: $F_0$ mean and SD (Hz, semitones), jitter (local, RAP, PPQ5), shimmer (local, APQ3, APQ5), HNR, $F_1$/$F_2$ mean and SD, intensity mean and SD, voiced fraction, duration | As above |
 | WavLM-Base+, frozen | Waveform, 16 kHz [Chen et al., 2022] | Layer-wise mean pooling; logistic regression, $C\in\{10^{-3},10^{-2},10^{-1},1\}$; layer chosen in inner CV |
 | XLS-R 300M, frozen | Waveform, 16 kHz [Babu et al., 2022] | As WavLM |
 | AST, frozen | Kaldi filterbank per AST specification [Gong et al., 2021], AudioSet-fine-tuned checkpoint | As WavLM |
 
-The ImageNet backbones of the preliminary study (ResNet-18, Swin, ViT) are not available as Keras applications. ResNet-50 and EfficientNet-B0 represent the ImageNet-transfer family, and AST represents Transformers on spectrograms. Fine-tuning AST was not attempted because of its computational cost.
+ViT-B/16, Swin-T, ResNet-50 and EfficientNet-B0 keep the comparison with the architectures of the preliminary study, but now under the same subject-independent protocol. ViT and Swin were fine-tuned in PyTorch (Hugging Face Transformers) with the same folds, segments, subject-balanced loss, learning-rate schedule and inner-validation early stopping as CTNet; each learning rate of the grid was trained with early stopping and the one with the lowest inner-validation loss was kept. Fine-tuning AST was not attempted because of its computational cost.
 
 ### Experiment III — Two-way external validation
 

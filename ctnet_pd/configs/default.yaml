@@ -68,7 +68,7 @@ normalization:
 
 # ---------------------------------------------------- 2.6 CTNet (Table 4)
 model:
-  architecture: ctnet       # ctnet | resnet50 | efficientnetb0 (Exp. II CNN baselines)
+  architecture: ctnet       # ctnet | resnet50 | efficientnetb0 | vit | swin (Exp. II baselines)
   pretrained_weights: imagenet   # backbone weights for resnet50 / efficientnetb0 (null = random)
   n_conv_blocks: 2          # fixed: gives the 14 x 25 token grid
   conv_filters: 64          # fixed: token dimension d = 64
@@ -98,6 +98,20 @@ baselines:
   chunk_seconds: 10.0       # long recordings are embedded in chunks and averaged, never truncated
   praat_f0_min: 75.0
   praat_f0_max: 500.0
+
+# ------------------- Exp. II ViT / Swin (continuity with the preliminary study)
+# Fine-tuned in PyTorch (Hugging Face) in a separate process; same folds, segments and loss as CTNet.
+vision_transformers:
+  checkpoints:
+    vit: google/vit-base-patch16-224
+    swin: microsoft/swin-tiny-patch4-window7-224
+  image_size: 224           # segments are resized (bilinear) to the pretraining resolution
+  learning_rates: [1.0e-4, 3.0e-5, 1.0e-5]   # searched on the inner split when tuning.enabled
+  learning_rate: 3.0e-5     # used when tuning.enabled is false
+  weight_decay: 0.01        # AdamW
+  batch_size: null          # null -> training.batch_size
+  max_epochs: null          # null -> training.max_epochs
+  mixed_precision: true     # fp16 autocast on GPU
 
 # ---------------------------------------------- 2.14 Training configuration
 training:

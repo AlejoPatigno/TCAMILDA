@@ -8,7 +8,7 @@ python scripts/run_experiment.py within --cohort neurovoz --variant resnet50
 python scripts/run_experiment.py baseline --cohort neurovoz --kind praat --task-family ddk_pataka
 python scripts/run_experiment.py external --source pcgita --target neurovoz --task-family monologue
 
-Spectrogram variants (--variant): ctnet, cnn_only, ctnet_flatten, resnet50, efficientnetb0.
+Spectrogram variants (--variant): ctnet, cnn_only, ctnet_flatten, resnet50, efficientnetb0, vit, swin.
 Other baselines (--kind): egemaps, praat (SVM) and wavlm, xlsr, ast (frozen-encoder probe);
 they reuse outputs/<cohort>/<family>/ctnet/folds.csv, so run CTNet first.
 """

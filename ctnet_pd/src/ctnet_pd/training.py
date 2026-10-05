@@ -19,6 +19,8 @@ import tensorflow as tf
 
 from .config import Config
 from .model import TUNABLE, build_model, explainer_model
+from .vision import TorchModelHandle
+from .vision import predict_proba as _torch_predict
 from .xai import logit_contrast
 
 
@@ -110,6 +112,8 @@ def fit(model, X_tr, y_tr, w_tr, X_val, y_val, w_val, cfg: Config, epochs: int |
 
 def predict_proba(model, X, batch_size: int = 128) -> np.ndarray:
     """P(PD) for each segment."""
+    if isinstance(model, TorchModelHandle):
+        return _torch_predict(model, X)
     base = model.base if isinstance(model, PriorRegularizedTrainer) else model
     out = []
     for start in range(0, len(X), batch_size):

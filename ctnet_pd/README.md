@@ -25,9 +25,11 @@ ctnet_pd/
 │   ├── reproducibility.py      # §2.12     perfiles de frecuencia, nulos por permutación, techo de ruido
 │   ├── priors.py               # §2.10     mapas de conceptos acústicos, prior, control aleatorio
 │   ├── baselines.py            # Exp. II   SVM sobre eGeMAPS y Praat; sonda sobre WavLM, XLS-R y AST congelados
+│   ├── vision.py               # Exp. II   ViT y Swin (PyTorch) sobre los segmentos log-Mel
+│   ├── isolation.py            #           ejecución en un intérprete sin TensorFlow
 │   ├── pipeline.py             # Exp. I–IV CV anidada (reanudable), validación externa y registro de variantes
 │   └── analysis.py             #           análisis sobre modelos guardados: mapas, fidelidad, prueba H1
-└── tests/                      # 37 pruebas, incluida una de punta a punta con audio sintético
+└── tests/                      # 39 pruebas, incluida una de punta a punta con audio sintético
 ```
 
 ## Uso en Kaggle
@@ -47,15 +49,17 @@ python scripts/run_experiment.py external --source pcgita --target neurovoz --ta
 
 | Grupo | Nombre | Cómo se corre |
 |---|---|---|
-| Sobre los mismos segmentos log-Mel | `cnn_only`, `ctnet_flatten`, `resnet50`, `efficientnetb0` | `within --variant <nombre>` (mismo pipeline que CTNet) |
+| Sobre los mismos segmentos log-Mel | `cnn_only`, `ctnet_flatten`, `resnet50`, `efficientnetb0`, `vit`, `swin` | `within --variant <nombre>` (mismo pipeline que CTNet) |
 | Rasgos por grabación + SVM | `egemaps`, `praat` | `baseline --kind <nombre>` |
 | Encoder congelado + regresión logística | `wavlm`, `xlsr`, `ast` | `baseline --kind <nombre>` |
 
 Los baselines `baseline` reutilizan `outputs/<cohorte>/<familia>/ctnet/folds.csv`, así que hay que correr CTNet primero. Así todos los modelos se evalúan sobre los mismos sujetos.
 
-openSMILE y PyTorch fallan (corrupción de memoria o segfault) si corren en un proceso que ya cargó TensorFlow. Por eso `egemaps_features` y `pretrained_embeddings` extraen en un subproceso `spawn` que no importa TensorFlow. En el notebook esto es transparente.
+`vit` (ViT-B/16) y `swin` (Swin-T) son los baselines del artículo de conferencia. Se ajustan en PyTorch desde checkpoints de ImageNet (Hugging Face, `vision_transformers` en el YAML), con los mismos folds, segmentos, pérdida y early stopping que CTNet. Cada segmento se redimensiona a 224×224.
 
-Dependencias opcionales: `pip install -e ".[baselines]"` (opensmile, praat-parselmouth, transformers, torch). ResNet-50 y EfficientNet-B0 descargan los pesos de ImageNet, así que la sesión de Kaggle necesita internet.
+openSMILE y PyTorch fallan (corrupción de memoria o segfault) si corren en un proceso que ya cargó TensorFlow. Por eso la extracción de eGeMAPS y de embeddings, y el entrenamiento de ViT/Swin, corren en un intérprete aparte que no importa TensorFlow (`isolation.py`). En el notebook esto es transparente.
+
+Dependencias opcionales: `pip install -e ".[baselines]"` (opensmile, praat-parselmouth, transformers, torch). ResNet-50, EfficientNet-B0, ViT y Swin descargan los pesos de ImageNet, así que la sesión de Kaggle necesita internet.
 
 Los resultados quedan en `outputs/<cohorte>/<familia>/<variante>/` (`folds.csv`, `predictions.csv` por segmento y `runs.jsonl` con los hiperparámetros elegidos y la mejor época de cada fold). Si la corrida se interrumpe, al relanzarla se saltan los folds ya terminados.
 

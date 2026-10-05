@@ -110,12 +110,16 @@ TUNABLE = {
     "ctnet": ("learning_rate", "dropout", "num_heads", "activation", "ffn_dim"),
     "resnet50": ("learning_rate", "dropout"),
     "efficientnetb0": ("learning_rate", "dropout"),
+    "vit": ("learning_rate",),   # PyTorch models: see vision.py
+    "swin": ("learning_rate",),
 }
 
 
 def build_model(cfg: Config, hp: dict | None = None) -> keras.Model:
     """Model registry: CTNet (and its ablations) or an ImageNet CNN baseline."""
     arch = cfg.model.architecture
+    if arch in ("vit", "swin"):
+        raise ValueError("ViT and Swin are PyTorch models; they are trained through vision.train")
     if arch == "ctnet":
         return build_ctnet(**model_kwargs(cfg, hp))
     return build_pretrained_cnn(
