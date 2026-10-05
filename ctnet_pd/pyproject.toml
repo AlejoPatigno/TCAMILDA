@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ctnet-pd"
+version = "0.1.0"
+description = "Explainable CNN-Transformer (CTNet) for speech-based Parkinson's disease classification"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy", "pandas", "scipy", "scikit-learn", "pyyaml",
+  "librosa>=0.10", "tensorflow>=2.16", "keras>=3",
+]
+
+[project.optional-dependencies]
+tuning = ["keras-tuner"]
+priors = ["praat-parselmouth"]
+baselines = ["opensmile", "praat-parselmouth", "transformers", "torch"]
+dev = ["pytest", "nbformat", "nbclient", "ipykernel"]
+notebook = ["matplotlib", "keras-tuner"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ctnet_pd = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

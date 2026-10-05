@@ -1,0 +1,189 @@
+# CTNet-PD experiment configuration.
+# Every value used by the experiments lives here; the code has no hidden constants.
+# Section numbers refer to paper/materials_methods_v2.md.
+#
+# Override from code:   cfg = load_config(path, overrides=["model.num_heads=4"])
+# Override from the CLI: python scripts/run_experiment.py --set model.num_heads=4
+
+project:
+  seed: 42
+  output_dir: outputs
+
+# ---------------------------------------------------------------- 2.2 Corpora
+cohorts:
+  neurovoz:
+    root: /kaggle/input/neurovoz-dataset/data
+    audio_dir: audios
+    metadata_hc: metadata/metadata_hc.csv
+    metadata_pd: metadata/metadata_pd.csv
+    # File names look like PD_PATATA_BLANDA_0037.wav -> group, task, subject.
+    filename_regex: '^(?P<group>HC|PD)_(?P<task>.+)_(?P<subject>\d+)\.wav$'
+  pcgita:
+    root: null              # [TBD] path to PC-GITA on Kaggle
+    audio_dir: null
+    metadata_hc: null
+    metadata_pd: null
+    filename_regex: null    # [TBD] PC-GITA naming convention
+
+# ------------------------------------------------- 2.3 Task families (Table 2)
+# Regular expressions matched against the upper-case task name; first match wins.
+# Run data.task_summary(index) once and check that no task falls into the default.
+task_families:
+  ddk_pataka: '^PATAKA$'
+  ddk_other: '^(PETAKA|PAKATA|PA|TA|KA)$'
+  monologue: '^(FREE|ESPONTANEA|MONOLOGO|MONOLOGUE)$'
+  read_text: '^(READ|LECTURA|TEXTO)$'
+  vowels: '^[AEIOU][0-9]?$'
+  default: repeat           # NeuroVoz listen-and-repeat utterances
+
+# -------------------------------------------- 2.5 Preprocessing (Table 3)
+audio:
+  sample_rate: 22050        # librosa.load resamples 44.1 kHz -> 22.05 kHz
+  mono: true
+  trim_silence: true        # leading/trailing silence only
+  trim_top_db: 30           # [TBD] confirm on pilot data
+  amplitude_norm: peak      # peak (min-max to [-1, 1]) | none
+
+spectrogram:
+  n_fft: 2048
+  hop_length: 512
+  win_length: null          # null -> n_fft
+  window: hann
+  center: true
+  n_mels: 128
+  fmin: 0.0
+  fmax: null                # null -> sample_rate / 2 = 11025 Hz
+  power: 2.0
+  db_ref: max               # 10*log10(S / max S), per recording
+  top_db: 80.0
+
+segmentation:               # operator R
+  frames: 229               # ~5.3 s at hop 512 / 22.05 kHz
+  hop_frames: 115           # ~50% overlap
+  min_fill: 0.5             # keep a padded last window only if >= 50% real frames
+  pad_value: min            # right-pad with the recording minimum (silence in dB)
+
+normalization:
+  per_band: true            # standardize each Mel band with training-partition stats
+
+# ---------------------------------------------------- 2.6 CTNet (Table 4)
+model:
+  architecture: ctnet       # ctnet | resnet50 | efficientnetb0 | vit | swin (Exp. II baselines)
+  pretrained_weights: imagenet   # backbone weights for resnet50 / efficientnetb0 (null = random)
+  n_conv_blocks: 2          # fixed: gives the 14 x 25 token grid
+  conv_filters: 64          # fixed: token dimension d = 64
+  kernel_size: 3
+  pool_size: 3
+  activation: gelu
+  positional_encoding: learned   # learned | none
+  n_transformer_layers: 1
+  num_heads: 2
+  key_dim: null             # null -> d / num_heads
+  ffn_dim: 128
+  dropout: 0.1
+  head: gap                 # gap (130 parameters) | flatten (preliminary-study head)
+  flatten_dense_units: 128  # only used when head == flatten
+  n_classes: 2
+
+# ------------------------------------------- Exp. II baselines (Table 6)
+baselines:
+  n_inner_folds: 4          # subject-grouped inner CV for the scikit-learn baselines
+  svm_C: [0.1, 1.0, 10.0, 100.0]
+  svm_gamma: [scale, 0.001, 0.01, 0.1]
+  logreg_C: [0.001, 0.01, 0.1, 1.0]
+  embedding_models:         # frozen pretrained encoders + logistic-regression probe
+    wavlm: microsoft/wavlm-base-plus
+    xlsr: facebook/wav2vec2-xls-r-300m
+    ast: MIT/ast-finetuned-audioset-10-10-0.4593
+  chunk_seconds: 10.0       # long recordings are embedded in chunks and averaged, never truncated
+  praat_f0_min: 75.0
+  praat_f0_max: 500.0
+
+# ------------------- Exp. II ViT / Swin (continuity with the preliminary study)
+# Fine-tuned in PyTorch (Hugging Face) in a separate process; same folds, segments and loss as CTNet.
+vision_transformers:
+  checkpoints:
+    vit: google/vit-base-patch16-224
+    swin: microsoft/swin-tiny-patch4-window7-224
+  image_size: 224           # segments are resized (bilinear) to the pretraining resolution
+  learning_rates: [1.0e-4, 3.0e-5, 1.0e-5]   # searched on the inner split when tuning.enabled
+  learning_rate: 3.0e-5     # used when tuning.enabled is false
+  weight_decay: 0.01        # AdamW
+  batch_size: null          # null -> training.batch_size
+  max_epochs: null          # null -> training.max_epochs
+  mixed_precision: true     # fp16 autocast on GPU
+
+# ---------------------------------------------- 2.14 Training configuration
+training:
+  batch_size: 32
+  max_epochs: 100
+  learning_rate: 4.0e-4
+  reduce_lr_factor: 0.5
+  reduce_lr_patience: 5
+  min_lr: 1.0e-6
+  early_stopping_patience: 15
+  subject_balanced: true    # each subject contributes equal total weight
+  class_balanced: true
+
+# ------------------------------------------------ 2.4 Partitioning
+cv:
+  n_outer_folds: 5
+  n_repeats: 10
+  inner: holdout            # holdout | kfold
+  inner_val_fraction: 0.2   # used when inner == holdout
+  n_inner_folds: 4          # used when inner == kfold
+
+# ----------------------------------------- 2.14 Hyperparameter search space
+tuning:
+  enabled: true
+  max_trials: 10
+  max_epochs: 40
+  search_space:
+    learning_rate: [1.0e-3, 4.0e-4, 1.0e-4]
+    dropout: [0.1, 0.2, 0.3]
+    num_heads: [1, 2, 4]
+    activation: [relu, gelu]
+    ffn_dim: [64, 128, 256]
+    lambda_prior: [0.01, 0.1, 1.0]     # prior variants only
+
+# -------------------------------------------------- 2.10 Acoustic prior
+prior:
+  enabled: false
+  lambda_prior: 0.1
+  map: joint                # pre | post | joint
+  concepts: [phonatory_band, voicing_transitions, aperiodic_band]   # [TBD] freeze before Exp. IV
+  weights: uniform
+  f0_min: 50.0
+  f0_max: 500.0
+  harmonics: 3              # phonatory band spans F0 .. harmonics * F0
+  band_tolerance_semitones: 2.0
+  transition_halfwidth_frames: 3
+  aperiodic_cutoff_hz: 4000.0          # [TBD]
+  formant_bandwidth_hz: 150.0          # [TBD] requires praat-parselmouth
+
+# ---------------------------------------- 2.11 Explanation evaluation
+xai:
+  q_step: 0.02              # 7 of 350 cells per step
+  q_points: [0.05, 0.10, 0.20]
+  baseline: gaussian        # gaussian | mean
+  n_random_masks: 10
+  min_shift_tokens: 6       # circular time shift drawn from [6, 25 - 6]
+  roar_q: [0.1, 0.3, 0.5]
+  agreement_q: [0.05, 0.10, 0.20]
+  topk_iou_q: 0.10
+
+# ----------------------------------- 2.12 Cross-cohort reproducibility
+reproducibility:
+  n_permutations: 10000
+  n_split_half: 1000
+  n_bootstrap: 2000
+  n_random_models: 10
+
+# ----------------------------------- 2.15-2.16 Metrics and statistics
+evaluation:
+  threshold: 0.5
+  n_bootstrap: 2000
+  ci_level: 0.95
+  noninferiority_auroc_margin: 0.05    # criterion A3, 2.10.4
+  noninferiority_gap_margin: 0.02      # criterion A2, 2.10.4
+  age_strata: [60, 70]                 # <=60, 61-70, >70
